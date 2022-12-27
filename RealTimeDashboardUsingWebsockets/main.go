@@ -105,11 +105,13 @@ var upgrades = websocket.Upgrader{
 }
 
 func DashboardHandler(w http.ResponseWriter, r *http.Request) {
+	upgrades.CheckOrigin = func(r *http.Request) bool { return true }
 	conn, err := upgrades.Upgrade(w, r, nil)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	defer conn.Close()
 	var data []byte
 	data = dashboard.FetchDashboardHelper()
 	conn.WriteMessage(1, data)
