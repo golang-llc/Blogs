@@ -21,6 +21,8 @@ type DashboardData struct {
 	Products  int `json:"products"`
 }
 
+var ChannelMap map[*websocket.Conn]chan int
+
 func (Dashboard *DashboardData) FetchDashboardHelper() []byte {
 	data, err := json.Marshal(Dashboard)
 	if err != nil {
@@ -38,10 +40,8 @@ func (Dashboard *DashboardData) AddDashboardData(s string) {
 	case PRODUCTS:
 		Dashboard.Products++
 	}
-	// update presently connected websocket connections about the dashboard changes
-	go func() {
-		update <- 1
-	}()
+	UpdateApi()
+	return
 }
 
 func (Dashboard *DashboardData) RemoveDashboardData(s string) error {
@@ -62,19 +62,15 @@ func (Dashboard *DashboardData) RemoveDashboardData(s string) error {
 		}
 		Dashboard.Products--
 	}
-	// update presently connected websocket connections about the dashboard changes
-	go func() {
-		update <- 1
-	}()
+	UpdateApi()
 	return nil
 }
 
-var update chan int
 var dashboard DashboardData
 
 func main() {
+	ChannelMap = make(map[*websocket.Conn]chan int)
 	fmt.Println("Starting Server...")
-	update = make(chan int)
 	router := chi.NewRouter()
 	router.Route("/", func(ws chi.Router) {
 		ws.Get("/", Alive)
@@ -104,7 +100,14 @@ var upgrades = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
+func UpdateApi() {
+	for _, element := range ChannelMap {
+		element <- 1
+	}
+}
+
 func DashboardHandler(w http.ResponseWriter, r *http.Request) {
+	update := make(chan int, 1)
 	upgrades.CheckOrigin = func(r *http.Request) bool { return true }
 	conn, err := upgrades.Upgrade(w, r, nil)
 	if err != nil {
@@ -115,13 +118,16 @@ func DashboardHandler(w http.ResponseWriter, r *http.Request) {
 	var data []byte
 	data = dashboard.FetchDashboardHelper()
 	conn.WriteMessage(1, data)
-	for {
-		select {
-		case <-update:
+
+	ChannelMap[conn] = update
+	func(conn *websocket.Conn, update chan int) {
+		for {
+			<-update
 			data = dashboard.FetchDashboardHelper()
 			conn.WriteMessage(1, data)
 		}
-	}
+	}(conn, ChannelMap[conn])
+	delete(ChannelMap, conn)
 	return
 }
 
